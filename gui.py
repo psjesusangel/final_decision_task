@@ -398,101 +398,143 @@ class LeftCalibrationFrame(CalibrationBaseFrame):
 
 
 class PracticeTrialsFrame(ttk.Frame):
-    """Frame to run practice trials"""
+    """Frame to run practice trials with combo‐box choice and continue button"""
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
         self.trial_index = 0
-        self.key_pressed = {}  # Track pressed state for each key
-        
-        # Configure the frame for centering
+        self.stage = None
+        self.choice_time = None
+        self.choice = None
+        self.choice_rt = None
+        self.clicks = 0
+        self.clicks_req = 0
+        self.duration = 0.0
+        self.key_pressed = {}  # for counting task clicks
+        self._last_click_time = 0.0
+
+        # layout
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        
-        # Create a centered content frame
-        content_frame = ttk.Frame(self)
-        content_frame.grid(row=0, column=0)
-        
-        self.instr = ttk.Label(content_frame, text="", wraplength=600)
-        self.instr.pack(pady=20)
-        self.progress = ttk.Progressbar(
-            content_frame, orient='horizontal', length=400, mode='determinate'
+        content = ttk.Frame(self)
+        content.grid(row=0, column=0)
+
+        # static instruction about the endowment
+        ttk.Label(
+            content,
+            text="You will start this task with an $8 endowment.\n"
+                 "On each trial, choose to complete an easy task or a hard task.",
+            wraplength=600,
+            justify="center"
+        ).pack(pady=(20, 10))
+
+        # dynamic trial prompt
+        self.instr = ttk.Label(content, text="", wraplength=600, justify="center")
+        self.instr.pack(pady=10)
+
+        # choice combo and button
+        self.choice_var = tk.StringVar()
+        self.choice_combo = ttk.Combobox(
+            content, textvariable=self.choice_var, state="readonly", width=30
         )
-        self.progress.pack(pady=10)
-        
-        # Bind both key press and key release events
+        self.choice_btn = ttk.Button(content, text="Continue", command=self.on_choice)
+
+        # progress bar for the task
+        self.progress = ttk.Progressbar(
+            content, orient="horizontal", length=400, mode="determinate"
+        )
+
+        # keep key bindings for the task phase
         self.bind_all('<KeyPress>', self.on_key_press)
         self.bind_all('<KeyRelease>', self.on_key_release)
-        
+
         logger.info("PracticeTrialsFrame initialized")
         self.load_trial()
 
     def load_trial(self):
-        """Load or finish practice trials"""
         if self.trial_index >= len(PRACTICE_TRIALS):
             logger.info("All practice trials complete")
             self.controller.save_data()
             self.controller.show_frame(EndFrame)
             return
+
         self.current = PRACTICE_TRIALS[self.trial_index]
         self.stage = 'choice'
         self.choice_time = time.time()
-        text = (
-            f"Practice Trial {self.trial_index+1}\n"
-            f"Choose a task: Easy:-$4 (Left)  Hard: ${self.current['magnitude_hard']:.2f} (Right)\n"
-            f"Probability of loss: {int(self.current['prob']*100)}%"
+
+        hard_amt = self.current['magnitude_hard']
+        loss_prob = int(self.current['prob'] * 100)
+        prompt = (
+            f"Practice Trial {self.trial_index + 1}\n\n"
+            f"Easy: pay $4 (100% success)\n"
+            f"Hard: pay ${hard_amt:.2f} (loss {loss_prob}% chance)\n\n"
+            "Select your option below and click Continue."
         )
-        self.instr.config(text=text)
+        self.instr.config(text=prompt)
+
+        # configure and show the combo + button
+        easy_label = "Easy: -$4"
+        hard_label = f"Hard: ${hard_amt:.2f}"
+        self.choice_combo.config(values=[easy_label, hard_label])
+        self.choice_var.set("")  # clear selection
+        self.choice_combo.pack(pady=5)
+        self.choice_btn.pack(pady=(5, 20))
+
+        # hide progress bar until task starts
+        self.progress.pack_forget()
+
+    def on_choice(self):
+        selection = self.choice_var.get()
+        if not selection:
+            return  # no choice made
+
+        # record response time and set up task parameters
+        rt = time.time() - self.choice_time
+        self.choice = 'Easy' if selection.startswith("Easy") else 'Hard'
+        self.choice_rt = rt
+        self.clicks = 0
+        if self.choice == 'Easy':
+            self.clicks_req = EASY_CLICKS_REQUIRED
+            self.duration = 7.0
+        else:
+            self.clicks_req = self.controller.hard_clicks_required
+            self.duration = 21.0
+
+        logger.info(
+            "Trial %d choice: %s (RT=%.3f)",
+            self.trial_index + 1, self.choice, rt
+        )
+
+        # hide choice widgets
+        self.choice_combo.pack_forget()
+        self.choice_btn.pack_forget()
+
+        # show and reset progress bar
         self.progress['value'] = 0
-        logger.info("Loaded trial %d", self.trial_index+1)
+        self.progress.pack(pady=10)
+
+        # begin the task
+        self.stage = 'task'
+        self.task_start = time.time()
+        self.task_end = self.task_start + self.duration
+        self.after(50, self.run_task)
 
     def on_key_press(self, event):
-        """Handle key press events with proper state tracking"""
-        key = event.keysym.lower()
-        
-        if self.stage == 'choice' and key in ('left', 'right') and not self.key_pressed.get(key, False):
-            # Mark key as pressed
-            self.key_pressed[key] = True
-            
-            # record choice response time
-            rt = time.time() - self.choice_time
-            choice = 'Easy' if key == 'left' else 'Hard'
-            clicks_req = (
-                EASY_CLICKS_REQUIRED if choice == 'Easy'
-                else self.controller.hard_clicks_required
-            )
-            duration = 7.0 if choice == 'Easy' else 21.0
-            logger.info(
-                "Trial %d choice: %s (RT=%.3f)",
-                self.trial_index+1, choice, rt
-            )
-            self.stage = 'task'
-            self.task_start = time.time()
-            self.task_end = self.task_start + duration
-            self.clicks = 0
-            self.choice = choice
-            self.choice_rt = rt
-            self.clicks_req = clicks_req
-            self.duration = duration
-            
-            # Reset key_pressed for next stage
-            self.key_pressed = {}
-            self.after(50, self.run_task)
-            
-        elif self.stage == 'task':
-            # Determine which keys are valid for the current task
-            valid_keys = ['space'] if self.choice == 'Easy' else ['left', 'right']
-            
-            # Only count if the key is valid and not already pressed
-            if key in valid_keys and not self.key_pressed.get(key, False):
+        if self.stage == 'task':
+            key = event.keysym.lower()
+            valid = ['space'] if self.choice == 'Easy' else ['left', 'right']
+            if key in valid and not self.key_pressed.get(key, False):
                 self.key_pressed[key] = True
-                self.clicks += 1
 
     def on_key_release(self, event):
-        """Handle key release events"""
-        key = event.keysym.lower()
-        # Mark the key as no longer pressed
-        self.key_pressed[key] = False
+        if self.stage == 'task':
+            key = event.keysym.lower()
+            if self.key_pressed.get(key, False):
+                now = time.time()
+                if now - self._last_click_time > MIN_PRESS_INTERVAL:
+                    self.clicks += 1
+                    self._last_click_time = now
+                self.key_pressed[key] = False
 
     def run_task(self):
         now = time.time()
@@ -503,7 +545,7 @@ class PracticeTrialsFrame(ttk.Frame):
                 datetime.now().strftime("%H:%M:%S"),
                 self.controller.subject,
                 self.controller.handedness,
-                self.trial_index+1,
+                self.trial_index + 1,
                 self.controller.domain,
                 self.controller.valence,
                 self.current['magnitude_hard'],
@@ -518,8 +560,9 @@ class PracticeTrialsFrame(ttk.Frame):
             self.controller.data.append(row)
             logger.info(
                 "Trial %d complete: clicks %d/%d, success=%d",
-                self.trial_index+1, self.clicks, self.clicks_req, complete
+                self.trial_index + 1, self.clicks, self.clicks_req, complete
             )
+
             iti = random.uniform(*ITI_RANGE)
             self.instr.config(text=f"ITI... please wait {iti:.1f}s")
             self.progress['value'] = 0
@@ -532,9 +575,8 @@ class PracticeTrialsFrame(ttk.Frame):
 
     def next_trial(self):
         self.trial_index += 1
-        self.key_pressed = {}  # Reset key states for next trial
+        self.key_pressed.clear()
         self.load_trial()
-
 
 class EndFrame(ttk.Frame):
     """Frame to show completion and exit."""
