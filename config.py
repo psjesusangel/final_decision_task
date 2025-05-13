@@ -4,10 +4,12 @@ config.py
 Global configuration parameters for the effort-based decision task experiment 
 """
 
+# Seconds between presses 
+MIN_PRESS_INTERVAL = 0.15
+
 # Number of trials per block (not currently used in practice trials)
 N_TRIALS = 42
 
-# TODO: Implement these values as well
 # Number of catch trials
 N_CATCH_TRIALS = 3
 

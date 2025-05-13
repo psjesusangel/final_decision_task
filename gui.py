@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 
 from config import (
-    ITI_RANGE, EASY_CLICKS_REQUIRED, CALIBRATION_DURATION,
+    MIN_PRESS_INTERVAL, ITI_RANGE, EASY_CLICKS_REQUIRED, CALIBRATION_DURATION,
     PRACTICE_TRIALS
 )
 from utils import save_data, logger
@@ -195,8 +195,7 @@ class InstructionsFrame(ttk.Frame):
         """Go to the right calibration frame"""
         self.controller.show_frame(RightCalibrationFrame)
 
-
-# Created a base class for calibration to avoid code duplication
+# Base class for calibration 
 class CalibrationBaseFrame(ttk.Frame):
     """Base frame for calibration tests - contains common functionality"""
     def __init__(self, parent, controller, side, next_frame_class):
@@ -206,6 +205,7 @@ class CalibrationBaseFrame(ttk.Frame):
         self.next_frame_class = next_frame_class
         self.count = 0
         self.key_pressed = False  # Track if key is currently pressed
+        self._last_count_time = 0.0
         
         # Configure the frame for centering
         self.columnconfigure(0, weight=1)
@@ -312,16 +312,19 @@ class CalibrationBaseFrame(ttk.Frame):
     def on_key_press(self, event):
         """Handle key press, but only count if key wasn't already pressed"""
         if event.keysym == self.side and not self.key_pressed:
-            self.key_pressed = True  # Mark this key as pressed
-            self.count += 1
-            logger.info(f"Count incremented to: {self.count}")
+            # Mark that the key is down; we'll count on the release
+            logger.info(f"Key pressed down")
+            self.key_pressed = True
     
     def on_key_release(self, event):
         """Handle key release to reset the key state"""
-        if event.keysym == self.side:
-            self.key_pressed = False  # Reset key state when released
-            logger.info(f"Key released: {event.keysym}")
-
+        if event.keysym == self.side and self.key_pressed:
+            now = time.time()
+            if now - self._last_count_time > MIN_PRESS_INTERVAL:
+                self.count += 1
+                self._last_count_time = now
+                logger.info(f"Count incremented to: {self.count}")
+            self.key_pressed = False
 
 class RightCalibrationFrame(CalibrationBaseFrame):
     """Frame for RIGHT arrow calibration"""
